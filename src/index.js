@@ -21,6 +21,7 @@ const cors = require('cors');
 
 const { initDatabase } = require('./database/init');
 const { resolveMiniAppUrl, closeTunnel } = require('./core/ngrok');
+const { startKeepAlive } = require('./core/keepAlive');
 const clientRoutes = require('./routes/client.routes');
 const adminRoutes = require('./routes/admin.routes');
 const setupBotRoutes = require('./routes/bot.routes');
@@ -44,6 +45,7 @@ async function start() {
   await setupBotRoutes(miniAppUrl);
 
   app.listen(config.port, () => {
+    startKeepAlive();
     console.log(`✅ Server http://localhost:${config.port} manzilida ishga tushdi`);
     console.log(`📊 Admin panel: http://localhost:5174`);
     if (miniAppUrl) {
