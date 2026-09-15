@@ -26,8 +26,11 @@ export function clearAdminKey() {
   }
 }
 
+// Internetga chiqarilgan backend. Lokal ishlaganda Vite proxy ishlatiladi.
+const PRODUCTION_API = 'https://pizza-delivery-backend-7ipz.onrender.com/api/admin';
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api/admin',
+  baseURL: import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '/api/admin' : PRODUCTION_API),
 });
 
 api.interceptors.request.use((config) => {
