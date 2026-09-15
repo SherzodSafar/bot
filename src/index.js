@@ -4,11 +4,15 @@ const config = require('./config/default');
 const missing = [];
 if (!config.databaseUrl) missing.push('DATABASE_URL');
 if (!config.botToken) missing.push('BOT_TOKEN');
+if (config.isProduction && !config.adminApiKey) missing.push('ADMIN_API_KEY');
 
 if (missing.length > 0) {
-  console.error(`\n❌ .env faylida ${missing.join(' va ')} topilmadi.\n`);
-  console.error('   Sozlash uchun quyidagini ishga tushiring:\n');
-  console.error('   npm run setup\n');
+  console.error(`\n❌ Sozlamalarda ${missing.join(' va ')} topilmadi.\n`);
+  console.error(
+    config.isProduction
+      ? '   Serverning Environment sozlamalariga ularni qo\'shing.\n'
+      : '   Sozlash uchun quyidagini ishga tushiring:\n\n   npm run setup\n'
+  );
   process.exit(1);
 }
 

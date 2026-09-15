@@ -8,6 +8,7 @@
   },
   "scripts": {
     "setup": "node scripts/setup.js",
+    "postinstall": "prisma generate",
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "prisma:generate": "prisma generate",

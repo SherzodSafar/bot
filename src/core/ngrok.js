@@ -47,6 +47,10 @@ async function closeTunnel() {
 }
 
 async function resolveMiniAppUrl() {
+  if (config.isProduction) {
+    return config.miniAppUrl;
+  }
+
   const startedUrl = await startTunnel();
   if (startedUrl) {
     console.log(`🔗 ngrok avtomatik ishga tushdi: ${startedUrl}`);

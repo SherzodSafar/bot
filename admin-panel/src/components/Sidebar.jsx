@@ -3,12 +3,13 @@ const navItems = [
   { key: 'products', icon: '🍕', label: 'Mahsulotlar' },
 ];
 
-export default function Sidebar({ activePage, onChange }) {
+export default function Sidebar({ activePage, onChange, onLogout }) {
   return (
     <div className="sidebar">
       <div className="sidebar-logo">
         Pizza<span>Admin</span>
       </div>
+
       {navItems.map((item) => (
         <button
           key={item.key}
@@ -19,6 +20,11 @@ export default function Sidebar({ activePage, onChange }) {
           <span>{item.label}</span>
         </button>
       ))}
+
+      <button className="sidebar-nav-item sidebar-logout" onClick={onLogout}>
+        <span>🚪</span>
+        <span>Chiqish</span>
+      </button>
     </div>
   );
 }
