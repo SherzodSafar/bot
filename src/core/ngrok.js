@@ -2,7 +2,9 @@ const config = require('../config/default');
 
 const NGROK_API = 'http://127.0.0.1:4040/api/tunnels';
 
-async function detectNgrokUrl() {
+let activeListener = null;
+
+async function detectRunningNgrok() {
   try {
     const res = await fetch(NGROK_API, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return null;
@@ -18,15 +20,47 @@ async function detectNgrokUrl() {
   }
 }
 
+async function startTunnel() {
+  if (!config.ngrokAuthtoken) return null;
+
+  try {
+    const ngrok = require('@ngrok/ngrok');
+    activeListener = await ngrok.forward({
+      addr: Number(config.miniAppPort),
+      authtoken: config.ngrokAuthtoken,
+    });
+    return activeListener.url();
+  } catch (err) {
+    console.error('ngrok tunnelini ochib bo\'lmadi:', err.message);
+    return null;
+  }
+}
+
+async function closeTunnel() {
+  if (!activeListener) return;
+  try {
+    await activeListener.close();
+  } catch {
+    /* tunnel allaqachon yopilgan */
+  }
+  activeListener = null;
+}
+
 async function resolveMiniAppUrl() {
-  const ngrokUrl = await detectNgrokUrl();
-  if (ngrokUrl) {
-    console.log(`🔗 ngrok tunneli topildi: ${ngrokUrl}`);
-    return ngrokUrl;
+  const startedUrl = await startTunnel();
+  if (startedUrl) {
+    console.log(`🔗 ngrok avtomatik ishga tushdi: ${startedUrl}`);
+    return startedUrl;
   }
 
-  console.log('⚠️  ngrok ishlamayapti — .env dagi MINIAPP_URL ishlatiladi');
+  const runningUrl = await detectRunningNgrok();
+  if (runningUrl) {
+    console.log(`🔗 Ishlab turgan ngrok topildi: ${runningUrl}`);
+    return runningUrl;
+  }
+
+  console.log('⚠️  ngrok topilmadi — .env dagi MINIAPP_URL ishlatiladi');
   return config.miniAppUrl;
 }
 
-module.exports = { detectNgrokUrl, resolveMiniAppUrl };
+module.exports = { resolveMiniAppUrl, closeTunnel };

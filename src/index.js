@@ -1,10 +1,22 @@
 require('dotenv').config();
+const config = require('./config/default');
+
+const missing = [];
+if (!config.databaseUrl) missing.push('DATABASE_URL');
+if (!config.botToken) missing.push('BOT_TOKEN');
+
+if (missing.length > 0) {
+  console.error(`\n❌ .env faylida ${missing.join(' va ')} topilmadi.\n`);
+  console.error('   Sozlash uchun quyidagini ishga tushiring:\n');
+  console.error('   npm run setup\n');
+  process.exit(1);
+}
+
 const express = require('express');
 const cors = require('cors');
 
-const config = require('./config/default');
 const { initDatabase } = require('./database/init');
-const { resolveMiniAppUrl } = require('./core/ngrok');
+const { resolveMiniAppUrl, closeTunnel } = require('./core/ngrok');
 const clientRoutes = require('./routes/client.routes');
 const adminRoutes = require('./routes/admin.routes');
 const setupBotRoutes = require('./routes/bot.routes');
@@ -29,11 +41,25 @@ async function start() {
 
   app.listen(config.port, () => {
     console.log(`✅ Server http://localhost:${config.port} manzilida ishga tushdi`);
+    console.log(`📊 Admin panel: http://localhost:5174`);
+    if (miniAppUrl) {
+      console.log(`📱 Mini App: ${miniAppUrl}`);
+      console.log('\n👉 Telegramda botingizga /start yuboring\n');
+    }
   });
 }
 
+async function shutdown() {
+  await closeTunnel();
+  process.exit(0);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
 start().catch((err) => {
   console.error('\n❌ Ishga tushirishda xato:', err.message);
-  console.error("\n.env faylidagi DATABASE_URL va BOT_TOKEN to'g'riligini tekshiring.\n");
+  console.error("\n.env faylidagi DATABASE_URL va BOT_TOKEN to'g'riligini tekshiring.");
+  console.error('Qaytadan sozlash uchun: npm run setup\n');
   process.exit(1);
 });
