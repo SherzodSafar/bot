@@ -1,6 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-
-const prisma = new PrismaClient();
+const prisma = require('../src/database/connection');
 
 const products = [
   {
@@ -29,7 +27,7 @@ const products = [
   },
   {
     name: 'Pishloqli',
-    description: "4 xil pishloq aralashmasi: Mozarella, Chedder, Parmezan, Gorgonzola",
+    description: '4 xil pishloq aralashmasi: Mozarella, Chedder, Parmezan, Gorgonzola',
     imageUrl: 'https://images.unsplash.com/photo-1548365328-9f547fb0953b?w=800&q=80',
     oldPrice: 80000,
     newPrice: 65000,
@@ -37,25 +35,29 @@ const products = [
   },
 ];
 
-async function main() {
+async function seedProducts() {
+  let added = 0;
   for (const product of products) {
     const existing = await prisma.product.findFirst({ where: { name: product.name } });
     if (!existing) {
       await prisma.product.create({ data: product });
-      console.log(`Qo'shildi: ${product.name}`);
-    } else {
-      console.log(`Allaqachon mavjud: ${product.name}`);
+      added += 1;
     }
   }
+  return added;
 }
 
-main()
-  .then(async () => {
-    await prisma.$disconnect();
-    console.log("Seed muvaffaqiyatli yakunlandi ✅");
-  })
-  .catch(async (e) => {
-    console.error(e);
-    await prisma.$disconnect();
-    process.exit(1);
-  });
+module.exports = { seedProducts };
+
+if (require.main === module) {
+  seedProducts()
+    .then(async (added) => {
+      console.log(`Seed yakunlandi ✅ (${added} ta yangi mahsulot qo'shildi)`);
+      await prisma.$disconnect();
+    })
+    .catch(async (e) => {
+      console.error(e);
+      await prisma.$disconnect();
+      process.exit(1);
+    });
+}

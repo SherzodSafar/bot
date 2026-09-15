@@ -3,13 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "main": "src/index.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev --name init",
+    "prisma:migrate": "prisma migrate deploy",
     "seed": "node prisma/seed.js",
-    "db:setup": "prisma migrate dev --name init && node prisma/seed.js",
+    "db:setup": "prisma migrate deploy && node prisma/seed.js",
     "install:all": "npm install && npm install --prefix mini-app && npm install --prefix admin-panel",
     "dev:all": "concurrently -k -n BACKEND,MINIAPP,ADMIN -c blue,green,magenta \"npm run dev\" \"npm run dev --prefix mini-app\" \"npm run dev --prefix admin-panel\""
   },

@@ -1,7 +1,8 @@
-const { registerBotHandlers } = require('../controllers/botController');
+const { registerBotHandlers, setupMenuButton } = require('../controllers/botController');
 
-function setupBotRoutes() {
-  registerBotHandlers();
+async function setupBotRoutes(miniAppUrl) {
+  registerBotHandlers(miniAppUrl);
+  await setupMenuButton();
 }
 
 module.exports = setupBotRoutes;
