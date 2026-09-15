@@ -1,0 +1,5 @@
+{
+  "watch": ["src"],
+  "ext": "js,json",
+  "ignore": ["mini-app", "admin-panel", "node_modules"]
+}
