@@ -1,7 +1,33 @@
+# Paketlar
 node_modules/
+.npm/
+
+# Maxfiy ma'lumotlar — HECH QACHON serverga yuklanmasin
+.env
+.env.*
+!.env.example
+
+# Build natijalari
 dist/
 build/
-.env
-.env.local
+.vite/
+
+# Loglar
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+
+# Muharrir va tizim fayllari
+.vscode/
+.idea/
+*.swp
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# Vaqtinchalik fayllar
+*.tmp
+.cache/
+coverage/
