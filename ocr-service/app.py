@@ -32,8 +32,12 @@ SECRET       = os.environ.get("OCR_SECRET", "")
 LANGS        = os.environ.get("OCR_LANGS", "uzb+rus")
 PSM          = os.environ.get("OCR_PSM", "11")
 MAX_BYTES    = int(os.environ.get("OCR_MAX_BYTES", str(8 * 1024 * 1024)))
-MIN_SIDE     = int(os.environ.get("OCR_MIN_SIDE", "1200"))
-MAX_SIDE     = int(os.environ.get("OCR_MAX_SIDE", "1600"))
+MIN_SIDE     = int(os.environ.get("OCR_MIN_SIDE", "1200"))   # uzun tomoni kamida
+MIN_SHORT    = int(os.environ.get("OCR_MIN_SHORT", "800"))   # qisqa tomoni kamida
+MAX_SIDE     = int(os.environ.get("OCR_MAX_SIDE", "3000"))   # uzun tomoni ko'pi bilan
+# 2 = Sauvola (lokal binarizatsiya). Rangli fondagi (masalan, Telegram'ning
+# binafsha xabar pufagidagi) oq yozuvni global usul yo'qotib qo'yadi.
+THRESH       = os.environ.get("OCR_THRESH", "2")
 TESS_TIMEOUT = int(os.environ.get("OCR_TESS_TIMEOUT", "90"))
 QUEUE_WAIT   = int(os.environ.get("OCR_QUEUE_WAIT", "60"))
 
@@ -102,14 +106,19 @@ def _prepare(data):
         img = bg
     img = img.convert("L")
 
+    # O'lcham: qisqa tomoni bo'yicha. Telefon skrinshoti ingichka va uzun
+    # (masalan 574x1280) — uzun tomon bo'yicha kichraytirilsa harflar
+    # juda maydalashib ketadi.
     w, h = img.size
-    longest = max(w, h)
-    if longest < MIN_SIDE:
-        k = MIN_SIDE / float(longest)
-        img = img.resize((int(w * k), int(h * k)), Image.LANCZOS)
-    elif longest > MAX_SIDE:
-        k = MAX_SIDE / float(longest)
-        img = img.resize((int(w * k), int(h * k)), Image.LANCZOS)
+    k = 1.0
+    if min(w, h) < MIN_SHORT:
+        k = MIN_SHORT / float(min(w, h))
+    if max(w, h) * k < MIN_SIDE:
+        k = MIN_SIDE / float(max(w, h))
+    if max(w, h) * k > MAX_SIDE:
+        k = MAX_SIDE / float(max(w, h))
+    if abs(k - 1.0) > 0.01:
+        img = img.resize((max(1, int(w * k)), max(1, int(h * k))), Image.LANCZOS)
 
     # Qorong'i fonda och rangli yozuv (reklama bannerlarida ko'p) —
     # Tesseract qora-ustida-oq matnni yaxshiroq o'qiydi.
@@ -123,6 +132,8 @@ def _tesseract(img):
     with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as tmp:
         img.save(tmp.name, format="PNG")
         cmd = ["tesseract", tmp.name, "stdout", "-l", LANGS, "--oem", "1", "--psm", PSM]
+        if THRESH:
+            cmd += ["-c", f"thresholding_method={THRESH}"]
         out = subprocess.run(cmd, capture_output=True, timeout=TESS_TIMEOUT,
                              env={**os.environ, "OMP_THREAD_LIMIT": "1"})
         if out.returncode != 0:
@@ -133,7 +144,7 @@ def _tesseract(img):
 @app.get("/")
 @app.get("/health")
 def health():
-    return jsonify(ok=True, service="ocr", langs=LANGS, psm=PSM,
+    return jsonify(ok=True, service="ocr", langs=LANGS, psm=PSM, thresh=THRESH,
                    uptime_s=int(time.time() - STARTED))
 
 
