@@ -41,6 +41,13 @@ THRESH       = os.environ.get("OCR_THRESH", "2")
 TESS_TIMEOUT = int(os.environ.get("OCR_TESS_TIMEOUT", "90"))
 QUEUE_WAIT   = int(os.environ.get("OCR_QUEUE_WAIT", "60"))
 
+# Bot rasmni base64 ko'rinishida oddiy forma maydonida yuboradi. Werkzeug
+# standart holatda forma maydonini 500 KB bilan cheklaydi va undan kattasiga
+# HTML "413" qaytaradi — katta (1280px) Telegram rasmlari shunga urilardi.
+# base64 (+33%) va URL-kodlash (+/= belgilari) hisobiga 2.5 baravar zaxira.
+app.config["MAX_FORM_MEMORY_SIZE"] = int(MAX_BYTES * 2.5)
+app.config["MAX_CONTENT_LENGTH"] = int(MAX_BYTES * 2.5) + 64 * 1024
+
 # Bepul tarifda 0.1 CPU bor — bir vaqtda faqat bitta Tesseract ishlasin,
 # aks holda ikkalasi ham sekinlashib timeout'ga tushadi.
 _slot = threading.Semaphore(1)
