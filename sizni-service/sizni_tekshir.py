@@ -86,7 +86,7 @@ SAVE_EVERY = 10
 app = Client(SESSION, api_id=API_ID, api_hash=API_HASH, workdir=BASE_DIR, in_memory=IN_MEMORY)
 busy = asyncio.Lock()
 STOP = {"flag": False}
-PENDING = {}     # bizning /sizni xabarimiz ID si → hisoblaydi javobini kutayotgan Future
+PENDING = {}     # bizning /sizni xabarimiz ID si → (Future, a'zo xabari ID si, a'zo ID si)
 CMD_TEXT = f"/sizni@{TARGET_BOT}"
 
 
@@ -218,8 +218,13 @@ APOS = str.maketrans({"ʻ": "'", "ʼ": "'", "‘": "'", "’": "'", "`": "'", "�
 
 
 def parse_count(text):
-    """"🔹 25 ta odam qo'shgan!" → 25;  "❌ hali odam qo'shmagan!" → 0;  tushunarsiz → None"""
+    """"🔹 25 ta odam qo'shgan!" → 25;  "❌ hali odam qo'shmagan!" → 0;  tushunarsiz → None.
+    Hisoblaydi birinchi qatorga a'zoning ismini yozadi (ismda raqam bo'lishi mumkin) —
+    shuning uchun "odam" so'zi bor qator o'qiladi."""
     t = (text or "").translate(APOS).casefold()
+    lines = [ln for ln in t.splitlines() if "odam" in ln]
+    if lines:
+        t = lines[-1]
     m = re.search(r"(\d+)\s*ta\s+odam", t) or re.search(r"(\d+)\s*ta\b", t)
     if m:
         return int(m.group(1))
@@ -228,15 +233,26 @@ def parse_count(text):
     return None
 
 
+def is_answer_for(msg, cmd_id, member_msg_id, uid):
+    """Hisoblaydining shu xabari bizning /sizni ga javobmi?
+    Hisoblaydi javobni reply qilmasdan yozadi: birinchi qatorda a'zoning ismi havola
+    (ID si bilan). Shuning uchun: reply bo'lsa — reply bo'yicha, bo'lmasa — ismdagi ID bo'yicha."""
+    if not is_target(msg) or msg.id <= cmd_id:
+        return False
+    rid = getattr(msg, "reply_to_message_id", None)
+    if rid in (cmd_id, member_msg_id):
+        return True
+    return uid is not None and int(uid) in mentioned_ids(msg)
+
+
 def deliver_answer(msg):
     """Hisoblaydi guruhga yozdi — bizning /sizni ga javobmi?"""
     if not is_target(msg):
         return False
-    rid = getattr(msg, "reply_to_message_id", None)
-    fut = PENDING.get(rid)
-    if fut is not None and not fut.done():
-        fut.set_result(msg)
-        return True
+    for cmd_id, (fut, mid, uid) in list(PENDING.items()):
+        if not fut.done() and is_answer_for(msg, cmd_id, mid, uid):
+            fut.set_result(msg)
+            return True
     return False
 
 
@@ -245,12 +261,10 @@ async def on_group_message(client, msg):
     deliver_answer(msg)
 
 
-async def wait_answer(client, cmd_id, member_msg_id):
-    """Javobni yangilik orqali kutamiz; kelmasa guruhning oxirgi xabarlarini o'zimiz tekshiramiz.
-    Hisoblaydi bizning buyrug'imizga yoki a'zoning xabariga reply qilishi mumkin — ikkalasi ham qabul."""
+async def wait_answer(client, cmd_id, member_msg_id, uid):
+    """Javobni yangilik orqali kutamiz; kelmasa guruhning oxirgi xabarlarini o'zimiz tekshiramiz."""
     fut = asyncio.get_event_loop().create_future()
-    PENDING[cmd_id] = fut
-    PENDING[member_msg_id] = fut
+    PENDING[cmd_id] = (fut, member_msg_id, uid)
     deadline = time.time() + ANSWER_WAIT
     try:
         while time.time() < deadline:
@@ -262,15 +276,13 @@ async def wait_answer(client, cmd_id, member_msg_id):
                 async def recent():
                     return [m async for m in client.get_chat_history(GROUP_ID, limit=15)]
                 for m in await flood_safe(recent, "javobni tekshirish"):
-                    if is_target(m) and getattr(m, "reply_to_message_id", None) in (cmd_id, member_msg_id) \
-                            and m.id > cmd_id:
+                    if is_answer_for(m, cmd_id, member_msg_id, uid):
                         return m
             except Exception as e:
                 log(f"   (guruhni tekshirib bo'lmadi: {e!r})")
         return None
     finally:
         PENDING.pop(cmd_id, None)
-        PENDING.pop(member_msg_id, None)
 
 
 # ---------------------------------------------------------------
@@ -385,13 +397,14 @@ async def check_one(client, st, uid, mid):
     # A'zoning xabari shu orada o'chirilgan bo'lsa Telegram buyruqni reply'siz yuboradi —
     # unda hisoblaydi BIZNING hisobimizni aytadi. Bunday javobni olmaymiz.
     if getattr(cmd, "reply_to_message_id", None) != mid:
-        stray = await wait_answer(client, cmd.id, cmd.id)     # uning javobi ham guruhda qolmasin
+        me = getattr(client, "me", None) or await client.get_me()
+        stray = await wait_answer(client, cmd.id, cmd.id, me.id)   # u bizning o'zimiz haqida javob beradi — u ham guruhda qolmasin
         try:
             await client.delete_messages(GROUP_ID, [cmd.id] + ([stray.id] if stray else []))
         except Exception:
             pass
         return {"n": None, "status": "nomsg"}
-    ans = await wait_answer(client, cmd.id, mid)
+    ans = await wait_answer(client, cmd.id, mid, uid)
     to_del = [cmd.id] + ([ans.id] if ans else [])
     try:
         await client.delete_messages(GROUP_ID, to_del)
@@ -428,7 +441,41 @@ async def am_i_admin(client):
     return True, ""
 
 
+async def sweep_leftovers(client, st):
+    """Oldingi (o'qilmay qolgan) hisoblaydi javoblarini topib, natijaga yozadi va o'chiradi."""
+    want = {int(u) for u, r in st["results"].items() if r.get("status") == "noanswer"}
+    queue = {int(u) for u in (st.get("queue") or [])}
+    found, to_del = 0, []
+    try:
+        async def recent():
+            return [m async for m in client.get_chat_history(GROUP_ID, limit=400)]
+        for m in await flood_safe(recent, "eski javoblar"):
+            if not is_target(m):
+                continue
+            raw = m.text or m.caption or ""
+            n = parse_count(raw)
+            if n is None or "kerak" in raw.casefold():
+                continue
+            ids = mentioned_ids(m) & queue
+            if len(ids) != 1:
+                continue
+            uid = next(iter(ids))
+            to_del.append(m.id)
+            if uid in want:
+                st["results"][str(uid)] = {"n": n, "status": "ok" if n > 0 else "zero", "raw": raw[:120]}
+                want.discard(uid)
+                found += 1
+        if to_del:
+            await client.delete_messages(GROUP_ID, to_del)
+    except Exception as e:
+        log(f"   (eski javoblarni tozalab bo'lmadi: {e!r})")
+    if to_del:
+        log(f"🧹 Guruhda qolgan {len(to_del)} ta hisoblaydi javobi o'chirildi ({found} tasi natijaga yozildi)")
+        save_state(st)
+
+
 async def check_all(client, st, base):
+    await sweep_leftovers(client, st)
     todo = [u for u in st["queue"] if u not in st["results"]
             or (st["results"][u]["status"] == "noanswer" and st["results"][u].get("tries", 1) < 2)]
     total = len(st["queue"])
@@ -479,6 +526,7 @@ async def check_all(client, st, base):
             if not st["tested"]:
                 answered = [(u, r) for u, r in st["results"].items() if r["status"] in ("ok", "zero", "unknown")]
                 if len(answered) >= TEST_FIRST:
+                    st["test_shown"] = True
                     save_state(st)
                     lines = [f"• {st['writers'][u].get('name', '')} ({u}): «{r.get('raw', '')[:100]}» → "
                              + (f"**{r['n']} ta**" if r["n"] is not None else "**tushunarsiz**") for u, r in answered]
@@ -520,7 +568,7 @@ async def run(client, resume, months=MONTHS):
         if os.path.exists(STATE_FILE):
             os.replace(STATE_FILE, f"sizni_holat_zaxira_{time.strftime('%Y%m%d_%H%M%S')}.json")
         st = new_state(months)
-    elif resume and not st["tested"] and st.get("queue") is not None:
+    elif resume and not st["tested"] and st.get("test_shown"):
         st["tested"] = True        # sinov javoblarini ko'rib, davom ettirildi
 
     # Hisoblaydi guruhdami? (oddiy a'zo katta guruhda buni so'ray olmaydi — unda tekshirmasdan davom)
