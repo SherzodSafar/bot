@@ -193,7 +193,15 @@ def form(action, key, inner, button):
 async def index(request):
     key = request.query.get("key", "")
     if not WEB_KEY or key != WEB_KEY:
-        return web.Response(status=403, text="Ruxsat yo'q")
+        msg = ("⚠️ Serverda WEB_KEY sozlanmagan." if not WEB_KEY
+               else ("❌ Parol noto'g'ri." if key else ""))
+        return web.Response(status=403, content_type="text/html", text=f"""<!doctype html><html lang="uz"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Kirish</title></head>
+<body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:420px;margin:40px auto;padding:16px">
+<h2>🔐 Sizni tekshiruvi</h2><p style="color:#b3261e">{html.escape(msg)}</p>
+<form method="get" action="/"><p>Parolni kiriting:</p>
+<input name="key" type="password" style="font-size:18px;padding:10px;width:100%;box-sizing:border-box">
+<button style="font-size:17px;padding:10px 18px;margin-top:10px">Kirish</button></form></body></html>""")
     err = f'<p class="err">{html.escape(AUTH["error"])}</p>' if AUTH["error"] else ""
     if not AUTH["ok"]:
         if AUTH["need_password"]:
