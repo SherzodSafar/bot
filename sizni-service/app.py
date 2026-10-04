@@ -218,6 +218,7 @@ async def index(request):
     running = H.busy.locked()
     btns = (form("/action", key, '<input type="hidden" name="do" value="start"><input name="months" value="6" style="width:80px"> oy ', "▶️ Boshlash")
             + form("/action", key, '<input type="hidden" name="do" value="resume">', "⏩ Davom (sinovdan keyin ham)")
+            + form("/action", key, '<input type="hidden" name="do" value="retry">', "🔁 Faqat javobsizlarni qayta tekshirish")
             + form("/action", key, '<input type="hidden" name="do" value="stop">', "⏹ To'xtatish")
             + form("/action", key, '<input type="hidden" name="do" value="result">', "📦 Natijani Telegramga yuborish"))
     up = (f'<form method="post" enctype="multipart/form-data" action="/upload?key={html.escape(key)}">'
@@ -298,6 +299,8 @@ async def post_action(request):
         loop.create_task(H.start(client, False, months))
     elif do == "resume":
         loop.create_task(H.start(client, True))
+    elif do == "retry":
+        loop.create_task(H.start(client, True, retry=True))
     elif do == "stop":
         H.STOP["flag"] = True
         _log("⏹ To'xtatish so'raldi")
