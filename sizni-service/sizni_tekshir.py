@@ -63,6 +63,9 @@ TARGET_BOT = os.environ.get("TARGET_BOT", "HisoblaydiBot")
 GROUP_ID = int(os.environ.get("GROUP_ID", "-1001589226429"))
 SESSION = "sizni_server"
 IN_MEMORY = bool(os.environ.get("SIZNI_WEB"))   # serverda sessiya xotirada (kirish veb-sahifa orqali)
+# Serverda hisobot va fayllar kirilgan akkauntning o'z "Saqlangan xabarlar"iga boradi
+# (boshqa akkauntdan kirilgan bo'lsa ADMIN_ID ni u "tanimasligi" mumkin).
+REPORT_TO = "me" if IN_MEMORY else ADMIN_ID
 
 BASE_FILE = "hisoblaydi_baza.json"               # kirish: hisoblaydi bazasi
 OUT_FILE = "hisoblaydi_baza_boyitilgan.json"     # chiqish: boyitilgan baza
@@ -94,7 +97,7 @@ def log(text):
 async def report(client, text):
     log(text.replace("**", ""))
     try:
-        return await client.send_message(ADMIN_ID, text)
+        return await client.send_message(REPORT_TO, text)
     except Exception as e:
         log(f"   (hisobotni yuborib bo'lmadi: {e!r})")
 
@@ -409,6 +412,22 @@ async def check_one(client, st, uid, mid):
     return {"n": n, "status": "ok" if n > 0 else "zero", "raw": raw[:120]}
 
 
+async def am_i_admin(client):
+    try:
+        me = await client.get_chat_member(GROUP_ID, "me")
+    except Exception as e:
+        return False, f"guruhdagi huquqlarni bilib bo'lmadi ({e.__class__.__name__})"
+    status = str(getattr(me, "status", "")).lower()
+    if "owner" in status or "creator" in status:
+        return True, ""
+    if "administrator" not in status:
+        return False, "bu akkaunt guruhda admin emas"
+    priv = getattr(me, "privileges", None)
+    if priv is not None and not getattr(priv, "can_delete_messages", False):
+        return False, "bu akkaunt admin, lekin «Xabarlarni o'chirish» huquqi yo'q"
+    return True, ""
+
+
 async def check_all(client, st, base):
     todo = [u for u in st["queue"] if u not in st["results"]
             or (st["results"][u]["status"] == "noanswer" and st["results"][u].get("tries", 1) < 2)]
@@ -504,15 +523,18 @@ async def run(client, resume, months=MONTHS):
     elif resume and not st["tested"] and st.get("queue") is not None:
         st["tested"] = True        # sinov javoblarini ko'rib, davom ettirildi
 
-    # Hisoblaydi guruhdami?
+    # Hisoblaydi guruhdami? (oddiy a'zo katta guruhda buni so'ray olmaydi — unda tekshirmasdan davom)
     try:
         mem = await client.get_chat_member(GROUP_ID, TARGET_BOT)
         status = str(getattr(mem, "status", "")).lower()
         if "left" in status or "banned" in status:
-            raise ValueError(status)
+            await report(client, f"⛔️ @{TARGET_BOT} guruhda yo'q ({status}). Uni guruhga qaytaring va qayta urinib ko'ring.")
+            return
     except Exception as e:
-        await report(client, f"⛔️ @{TARGET_BOT} guruhda topilmadi ({e!r}). Uni guruhga qaytaring va qayta urinib ko'ring.")
-        return
+        if "USER_NOT_PARTICIPANT" in repr(e).upper() or "UserNotParticipant" in repr(e):
+            await report(client, f"⛔️ @{TARGET_BOT} guruhda yo'q. Uni guruhga qaytaring va qayta urinib ko'ring.")
+            return
+        log(f"   (@{TARGET_BOT} guruhdaligini tekshirib bo'lmadi: {e.__class__.__name__} — davom etamiz)")
 
     await report(client, f"📦 Hisoblaydi bazasi: **{len(base)}** ta a'zo.")
     if not st["scan_done"]:
@@ -529,6 +551,17 @@ async def run(client, resume, months=MONTHS):
                              f"• hisoblaydi bazasida bor: {skip_base} ta — tekshirilmaydi\n"
                              f"• adminlar: {skip_admin} ta — tekshirilmaydi\n"
                              f"• **tekshiriladi: {n} ta** (taxminan {n * 13 // 3600} soat {n * 13 % 3600 // 60} daqiqa)")
+
+    # Guruhga yozishdan OLDIN: bu akkaunt admin va xabar o'chira oladimi?
+    # Oddiy a'zo bo'lsa — Nazorat uning /sizni xabarlarini o'chirib, yozishini yopadi,
+    # hisoblaydi javoblari esa guruhda o'chirilmay qolib ketadi.
+    ok_admin, why = await am_i_admin(client)
+    if not ok_admin:
+        save_state(st)
+        await report(client, "⛔️ **Tekshiruv boshlanmadi:** " + why + "\n\n"
+                             "Guruh sozlamalarida shu akkauntni **admin** qiling (faqat «Xabarlarni o'chirish» huquqi yetarli), "
+                             "keyin «Davom» ni bosing. Tarix o'qilgani saqlangan — qaytadan o'qilmaydi.")
+        return
 
     res = await check_all(client, st, base)
     out = save_outputs(base, st)
@@ -555,7 +588,7 @@ async def send_files(client):
     for path, cap in ((OUT_FILE, "Boyitilgan baza"), (REPORT_FILE, "Kim qancha qo'shgani")):
         if os.path.exists(path):
             try:
-                await client.send_document(ADMIN_ID, path, caption=cap)
+                await client.send_document(REPORT_TO, path, caption=cap)
             except Exception as e:
                 log(f"   faylni yuborib bo'lmadi: {e!r} — u shu papkada: {path}")
 
@@ -587,7 +620,7 @@ def state_summary():
             f"qo'shmagan: {stats.get('zero', 0)} · javobsiz: {stats.get('noanswer', 0)} · xabari yo'q: {stats.get('nomsg', 0)}")
 
 
-ADMIN_FILTER = filters.user(ADMIN_ID) & filters.private
+ADMIN_FILTER = (filters.me & filters.private) if IN_MEMORY else (filters.user(ADMIN_ID) & filters.private)
 
 
 @app.on_message(filters.document & ADMIN_FILTER)
