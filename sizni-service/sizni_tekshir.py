@@ -37,7 +37,6 @@ import random
 import re
 import sys
 import time
-import unicodedata
 
 # ---------- Windows CMD va turli Python versiyalari uchun moslash ----------
 for _stream in (sys.stdout, sys.stderr):
@@ -77,7 +76,7 @@ MONTHS = 6             # necha oylik tarix o'qiladi
 DELAY = (7, 11)        # har bir tekshiruv orasida (soniya, tasodifiy)
 PAUSE_EVERY = 40       # har shuncha tekshiruvdan keyin dam
 PAUSE_SEC = (90, 150)  # dam olish (soniya)
-ANSWER_WAIT = 30       # hisoblaydi javobini ko'pi bilan necha soniya kutish
+ANSWER_WAIT = 45       # hisoblaydi javobini ko'pi bilan necha soniya kutish (kechikkan javob keyingi a'zoga yozilib ketmasin)
 POLL = 2.5             # javob kelmasa guruhni o'zimiz necha soniyada bir tekshiramiz
 TEST_FIRST = 3         # dastlab shuncha kishini tekshirib, javoblarni ko'rsatib to'xtaydi
 MAX_SILENT = 6         # hisoblaydi ketma-ket shuncha marta javob bermasa — dam olib qayta urinadi
@@ -234,24 +233,6 @@ def parse_count(text):
     return None
 
 
-def norm(name):
-    """Ismni solishtirish uchun: katta-kichik harf, ortiqcha probel, ko'rinmas belgilar."""
-    name = unicodedata.normalize("NFKC", name or "")
-    name = "".join(ch for ch in name if unicodedata.category(ch) not in ("Cf", "Cc"))
-    return " ".join(name.casefold().split())
-
-
-def first_line(msg):
-    t = (getattr(msg, "text", None) or getattr(msg, "caption", None) or "").strip()
-    return t.splitlines()[0] if t else ""
-
-
-def name_matches(line, name):
-    """Hisoblaydi javobidagi ism (1-qator) shu a'zoning ismimi? (to'liq ism yoki faqat birinchi ismi)"""
-    a, b = norm(line), norm(name)
-    return bool(a) and bool(b) and (a == b or b.startswith(a + " "))
-
-
 def is_counter_answer(msg):
     """Hisoblaydining "/sizni" javobi (boshqalarga yozgan "odam qo'shishingiz kerak" eslatmasi emas)"""
     raw = getattr(msg, "text", None) or getattr(msg, "caption", None) or ""
@@ -260,18 +241,21 @@ def is_counter_answer(msg):
 
 def is_answer_for(msg, cmd_id, member_msg_id, uid, name=None):
     """Hisoblaydining shu xabari bizning /sizni ga javobmi?
-    Hisoblaydi javobni reply qilmasdan yozadi: birinchi qatorda a'zoning ismi — odatda havola
-    (ID si bilan), lekin ba'zi a'zolarda Telegram havola qilishga ruxsat bermaydi va ism oddiy
-    matn bo'ladi. Shuning uchun: reply → ismdagi ID → (havola bo'lmasa) ismning o'zi."""
+    A'zolar BIRMA-BIR so'raladi: buyruq yuboriladi, javob kutiladi, keyin keyingisi. Shuning uchun
+    buyrug'imizdan keyin kelgan birinchi hisoblaydi javobi — biz reply qilgan (ID si ma'lum) a'zoniki.
+    Javobdagi ism havola bo'lsa (ID bor) — qo'shimcha tekshiramiz: boshqa odam haqida bo'lsa olinmaydi.
+    Boshqalarga yozilgan "odam qo'shishingiz kerak" eslatmalari javob hisoblanmaydi."""
     if not is_target(msg) or msg.id <= cmd_id:
         return False
     rid = getattr(msg, "reply_to_message_id", None)
     if rid in (cmd_id, member_msg_id):
         return True
+    if not is_counter_answer(msg):
+        return False
     who = mentioned_ids(msg)
     if who:
         return uid is not None and int(uid) in who
-    return bool(name) and is_counter_answer(msg) and name_matches(first_line(msg), name)
+    return True
 
 
 def deliver_answer(msg):
@@ -471,47 +455,45 @@ async def am_i_admin(client):
 
 
 async def sweep_leftovers(client, st):
-    """Oldingi (o'qilmay qolgan) hisoblaydi javoblarini topib, natijaga yozadi va o'chiradi."""
+    """Oldingi (o'qilmay qolgan) hisoblaydi javoblarini topib, guruhdan o'chiradi.
+    Ismi havola (ID bor) bo'lsa — natijaga ham yoziladi. Havolasiz bo'lsa — kimniki ekanini aniq
+    bilib bo'lmaydi (buyrug'imiz allaqachon o'chirilgan): faqat o'chiriladi, o'sha a'zo qayta so'raladi."""
     want = {int(u) for u, r in st["results"].items() if r.get("status") == "noanswer"}
     queue = {int(u) for u in (st.get("queue") or [])}
-    # Havolasiz javoblar uchun: javobsiz qolganlarning ismlari (faqat takrorlanmaydigan ismlar)
-    by_name = {}
-    for u in want:
-        k = norm(st["writers"].get(str(u), {}).get("name", ""))
-        if k:
-            by_name.setdefault(k, []).append(u)
-    found, to_del = 0, []
+    found, plain, to_del = 0, 0, []
+    day_ago = time.time() - 86400
     try:
         async def recent():
             return [m async for m in client.get_chat_history(GROUP_ID, limit=3000)]
         for m in await flood_safe(recent, "eski javoblar"):
+            if m.date and m.date.timestamp() < day_ago:
+                break
             if not is_target(m) or not is_counter_answer(m):
                 continue
-            raw = m.text or m.caption or ""
-            n = parse_count(raw)
             who = mentioned_ids(m)
-            if who:
-                ids = who & queue
-            else:
-                line = norm(first_line(m))
-                cand = by_name.get(line) or [u for k, us in by_name.items() if k.startswith(line + " ") for u in us]
-                ids = set(cand) if len(cand) == 1 else set()
+            if not who:
+                to_del.append(m.id)
+                plain += 1
+                continue
+            ids = who & queue
             if len(ids) != 1:
                 continue
             uid = next(iter(ids))
-            if not who:
-                by_name.pop(norm(st["writers"].get(str(uid), {}).get("name", "")), None)   # bir ism — bir javob
             to_del.append(m.id)
             if uid in want:
+                raw = m.text or m.caption or ""
+                n = parse_count(raw)
                 st["results"][str(uid)] = {"n": n, "status": "ok" if n > 0 else "zero", "raw": raw[:120]}
                 want.discard(uid)
                 found += 1
         if to_del:
-            await client.delete_messages(GROUP_ID, to_del)
+            for i in range(0, len(to_del), 100):
+                await client.delete_messages(GROUP_ID, to_del[i:i + 100])
     except Exception as e:
         log(f"   (eski javoblarni tozalab bo'lmadi: {e!r})")
     if to_del:
-        log(f"🧹 Guruhda qolgan {len(to_del)} ta hisoblaydi javobi o'chirildi ({found} tasi natijaga yozildi)")
+        log(f"🧹 Guruhda qolgan {len(to_del)} ta hisoblaydi javobi o'chirildi ({found} tasi natijaga yozildi, "
+            f"{plain} tasi havolasiz — o'sha a'zolar qayta so'raladi)")
         save_state(st)
 
 
@@ -687,9 +669,13 @@ def reset_noanswer():
     st = load_state()
     if not st:
         return 0
+    # Qo'shimcha qayta tekshiriladiganlar (masalan, natijasi ishonchsiz deb topilganlar):
+    # muhit o'zgaruvchisi RECHECK_IDS="123,456,..."
+    extra = {x.strip() for x in os.environ.get("RECHECK_IDS", "").replace(" ", ",").split(",") if x.strip().isdigit()}
+    queue = set(st.get("queue") or [])
     n = 0
-    for u in list(st["results"]):
-        if st["results"][u].get("status") == "noanswer":
+    for u in list(st["results"]) + [x for x in extra if x in queue and x not in st["results"]]:
+        if u in extra or st["results"].get(u, {}).get("status") == "noanswer":
             st["results"][u] = {"n": None, "status": "noanswer", "tries": 0}   # 0 — yana 2 marta urinadi
             n += 1
     st["tested"] = True
