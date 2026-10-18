@@ -21,7 +21,8 @@ const cors = require('cors');
 
 const { initDatabase } = require('./database/init');
 const { resolveMiniAppUrl, closeTunnel } = require('./core/ngrok');
-const { startKeepAlive } = require('./core/keepAlive');
+const crypto = require('crypto');
+const bot = require('./core/bot');
 const clientRoutes = require('./routes/client.routes');
 const adminRoutes = require('./routes/admin.routes');
 const setupBotRoutes = require('./routes/bot.routes');
@@ -38,14 +39,30 @@ app.get('/', (req, res) => {
 app.use('/api/client', clientRoutes);
 app.use('/api/admin', adminRoutes);
 
+// Webhook manzili tokendan hosil qilingan maxfiy yo'lda — begonalar soxta xabar yubora olmaydi.
+const webhookPath = `/api/bot/webhook/${crypto.createHash('sha256').update(String(config.botToken)).digest('hex').slice(0, 32)}`;
+if (config.useWebhook) {
+  app.post(webhookPath, (req, res) => {
+    bot.processUpdate(req.body);
+    res.sendStatus(200);
+  });
+}
+
 async function start() {
   await initDatabase();
 
   const miniAppUrl = await resolveMiniAppUrl();
   await setupBotRoutes(miniAppUrl);
 
-  app.listen(config.port, () => {
-    startKeepAlive();
+  app.listen(config.port, async () => {
+    if (config.useWebhook) {
+      try {
+        await bot.setWebHook(`${config.publicUrl.replace(/\/$/, '')}${webhookPath}`);
+        console.log('✅ Bot webhook rejimida ishlayapti');
+      } catch (err) {
+        console.error('Webhook o\'rnatilmadi:', err.message);
+      }
+    }
     console.log(`✅ Server http://localhost:${config.port} manzilida ishga tushdi`);
     console.log(`📊 Admin panel: http://localhost:5174`);
     if (miniAppUrl) {
