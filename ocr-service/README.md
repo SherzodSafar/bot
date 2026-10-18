@@ -13,12 +13,6 @@ Tillar: o'zbek (lotin), rus (kirill). `OCR_LANGS` orqali o'zgartirish mumkin.
 
 Javob: `{"ok": true, "text": "...", "ms": 2800, "langs": "uzb+rus"}`
 
-**Kesh:** bir xil rasm qayta o'qilmaydi. So'rovga `key` maydonini (Telegram'dagi
-`file_unique_id`) qo'shsangiz, rasm hatto yuklab olinmaydi ham — javob darhol
-`"cached": true` bilan qaytadi. `key` bo'lmasa, rasm baytlarining xeshi bo'yicha
-tekshiriladi. Kesh xotirada turadi (`OCR_CACHE_SIZE`, standart 3000), server
-qayta yonganda tozalanadi.
-
 ## Muhit o'zgaruvchilari
 
 | Nomi | Standart | Izoh |
