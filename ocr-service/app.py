@@ -13,6 +13,7 @@ Rasm uch xil usulda yuborilishi mumkin:
   - 'url' (http/https)
 """
 import base64
+import hashlib
 import hmac
 import io
 import os
@@ -21,6 +22,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+from collections import OrderedDict
 
 from flask import Flask, jsonify, request
 from PIL import Image, ImageOps, ImageStat
@@ -53,7 +55,35 @@ app.config["MAX_CONTENT_LENGTH"] = int(MAX_BYTES * 2.5) + 64 * 1024
 _slot = threading.Semaphore(1)
 _stats_lock = threading.Lock()
 STARTED = time.time()
-STATS = {"requests": 0, "success": 0, "errors": 0, "busy": 0, "total_ms": 0}
+STATS = {"requests": 0, "success": 0, "errors": 0, "busy": 0, "total_ms": 0, "cache_hits": 0}
+
+# Bir xil rasm (masalan, guruhga qayta-qayta tashlanadigan reklama) ikkinchi
+# marta Tesseract'dan o'tkazilmaydi. Kalit: so'rovdagi `key` (Telegram'ning
+# file_unique_id si) yoki rasm baytlarining SHA-256 xeshi.
+CACHE_SIZE = int(os.environ.get("OCR_CACHE_SIZE", "3000"))
+_cache = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def _cache_get(k):
+    if not k:
+        return None
+    with _cache_lock:
+        if k in _cache:
+            _cache.move_to_end(k)
+            return _cache[k]
+    return None
+
+
+def _cache_put(keys, text):
+    with _cache_lock:
+        for k in keys:
+            if not k:
+                continue
+            _cache[k] = text
+            _cache.move_to_end(k)
+        while len(_cache) > CACHE_SIZE:
+            _cache.popitem(last=False)
 
 
 def _bump(key, ms=0):
@@ -162,6 +192,7 @@ def stats():
     with _stats_lock:
         s = dict(STATS)
     s["avg_ms"] = int(s["total_ms"] / s["success"]) if s["success"] else 0
+    s["cache_size"] = len(_cache)
     return jsonify(ok=True, uptime_s=int(time.time() - STARTED), **s)
 
 
@@ -171,10 +202,25 @@ def ocr():
         return jsonify(ok=False, error="ruxsat yo'q"), 401
 
     _bump("requests")
+    payload = request.get_json(silent=True) or {}
+    key = (request.form.get("key") or payload.get("key") or "").strip()[:200]
+    key = "k:" + key if key else ""
+    cached = _cache_get(key)
+    if cached is not None:
+        _bump("cache_hits")
+        return jsonify(ok=True, text=cached, ms=0, langs=LANGS, cached=True)
+
     data, err, code = _read_image_bytes()
     if err:
         _bump("errors")
         return jsonify(ok=False, error=err), code
+
+    digest = "h:" + hashlib.sha256(data).hexdigest()
+    cached = _cache_get(digest)
+    if cached is not None:
+        _bump("cache_hits")
+        _cache_put([key], cached)
+        return jsonify(ok=True, text=cached, ms=0, langs=LANGS, cached=True)
 
     if not _slot.acquire(timeout=QUEUE_WAIT):
         _bump("busy")
@@ -195,6 +241,7 @@ def ocr():
 
     ms = int((time.time() - t0) * 1000)
     _bump("success", ms)
+    _cache_put([key, digest], text)
     return jsonify(ok=True, text=text, ms=ms, langs=LANGS)
 
 
